@@ -21,7 +21,7 @@ Built on the open-source [4x4e](https://github.com/americusmaximus/4x4e) reimple
    ```powershell
    powershell -ExecutionPolicy Bypass -File .\install.ps1 -GamePath "C:\Games\4x4 Evolution"
    ```
-4. **Launch `4x4.exe`.** If the blue "4x4 Setup Options" screen appears, Renderer should read **Direct3D 7** and 3D Card **evo2026 Direct3D 9**. Pick **Run 4x4**.
+4. **Launch `4x4.exe`.** The game shows its blue "4x4 Setup Options" screen on every start (that's the original design). Renderer should read **Direct3D 7** and 3D Card **evo2026 Direct3D 9**. Press Enter on **Run 4x4**.
 
 To go back to stock, run `uninstall.ps1 -GamePath "..."`.
 
@@ -82,7 +82,6 @@ The upscaler wrap-pads tileable terrain so it stays seamless, edge-pads atlases 
 - **Widescreen is 4:3 with side bars** (or stretched). A true wider field of view needs a small patch to the exe's projection code. That's next on the list.
 - **Lighting is still the original per-vertex lighting** baked by the game on the CPU. The exe also supports an unshipped hardware lighting renderer (`tridx8tl.dll`) with `setLightVector`, `setAmbientLight`, `addDynamicLight` and transform calls. That's the way into real per-pixel lighting.
 - **Intro videos and the setup screen** are drawn by the game's own DirectDraw code before the renderer starts, so they run at 640×480. They're unaffected by evo2026.
-- **The setup screen comes back** if the previous session crashed or was force-closed. That's the game's own crash recovery.
 - **Mouse/gamepad** are unchanged from the original (DirectInput). Modern-controller support is a planned add-on.
 
 ## Troubleshooting
