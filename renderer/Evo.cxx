@@ -3,6 +3,9 @@ evo2026 — HD extensions for the 4x4 Evolution Direct3D 9 renderer. See Evo.hxx
 */
 #include "Evo.hxx"
 #include "Trace.hxx"
+#include "EvoHooks.hxx"
+#include "Mathematics.Basic.hxx"
+using namespace Mathematics;
 
 #include <stdlib.h>
 #include <string.h>
@@ -12,10 +15,13 @@ namespace Evo
     ConfigState Config;
     ViewState View;
 
-    static u32 ReadInt(const char* name, const u32 value)
+    u32 ReadSetting(const char* name, const u32 value)
     {
-        return (u32)GetPrivateProfileIntA(EVO_SECTION, name, (INT)value, EVO_INI);
+        const u32 fallback = (u32)GetPrivateProfileIntA(EVO_SECTION, name, (INT)value, EVO_INI_FALLBACK);
+        return (u32)GetPrivateProfileIntA(EVO_SECTION, name, (INT)fallback, EVO_INI);
     }
+
+    static u32 ReadInt(const char* name, const u32 value) { return ReadSetting(name, value); }
 
     void LoadConfig(void)
     {
@@ -26,6 +32,8 @@ namespace Evo
         Config.VSync = ReadInt("VSync", Config.VSync);
         Config.Anisotropy = ReadInt("Anisotropy", Config.Anisotropy);
         Config.Filter2D = ReadInt("Filter2D", Config.Filter2D);
+        Config.Widescreen = ReadInt("Widescreen", Config.Widescreen);
+        Config.HudToEdges = ReadInt("HudToEdges", Config.HudToEdges);
 
         if (Config.Window > 2) { Config.Window = 2; }
         if (Config.Anisotropy > 16) { Config.Anisotropy = 16; }
@@ -41,38 +49,161 @@ namespace Evo
         View.OutWidth = outWidth;
         View.OutHeight = outHeight;
 
-        if (Config.Aspect == 0)
+        const f64 game = (f64)gameWidth / (f64)gameHeight;
+        const f64 out = (f64)outWidth / (f64)outHeight;
+
+        // Widescreen: widen the logical image so it matches the output's aspect (Hor+).
+        f64 factor = 1.0;
+        if (Config.Widescreen && Hooks::Installed() && out > game * 1.001) { factor = out / game; }
+        Hooks::SetWidescreen((f32)factor, gameWidth, gameHeight);
+
+        View.Extra = Hooks::ExtraWidth();
+        const f64 logicalWidth = (f64)gameWidth + 2.0 * (f64)View.Extra;
+        const f64 logical = logicalWidth / (f64)gameHeight;
+
+        if (Config.Aspect == 0 && View.Extra <= 0.0f)
         {
             View.X = 0; View.Y = 0; View.W = outWidth; View.H = outHeight;
         }
+        else if (out > logical)
+        {
+            View.H = outHeight;
+            View.W = (u32)((f64)outHeight * logical + 0.5);
+        }
         else
         {
-            // Fit the game's aspect ratio inside the output, centred.
-            const f64 game = (f64)gameWidth / (f64)gameHeight;
-            const f64 out = (f64)outWidth / (f64)outHeight;
+            View.W = outWidth;
+            View.H = (u32)((f64)outWidth / logical + 0.5);
+        }
 
-            if (out > game)
-            {
-                View.H = outHeight;
-                View.W = (u32)((f64)outHeight * game + 0.5);
-            }
-            else
-            {
-                View.W = outWidth;
-                View.H = (u32)((f64)outWidth / game + 0.5);
-            }
-
+        if (!(Config.Aspect == 0 && View.Extra <= 0.0f))
+        {
             View.X = (outWidth - View.W) / 2;
             View.Y = (outHeight - View.H) / 2;
         }
 
-        View.SX = (f32)View.W / (f32)gameWidth;
+        View.SX = (f32)((f64)View.W / logicalWidth);
         View.SY = (f32)View.H / (f32)gameHeight;
-        View.OX = (f32)View.X;
+        View.OX = (f32)View.X + View.Extra * View.SX;
         View.OY = (f32)View.Y;
 
-        EVO_TRACE("evo2026 view: game %ux%u -> out %ux%u, image %u,%u %ux%u scale %.3f,%.3f",
-            gameWidth, gameHeight, outWidth, outHeight, View.X, View.Y, View.W, View.H, View.SX, View.SY);
+        View.CoreX = (u32)(View.OX + 0.5f);
+        View.CoreY = View.Y;
+        View.CoreW = (u32)((f32)gameWidth * View.SX + 0.5f);
+        View.CoreH = View.H;
+
+        EVO_TRACE("evo2026 view: game %ux%u (+%.1f each side) -> out %ux%u, image %u,%u %ux%u, 4:3 core %u..%u, scale %.3f,%.3f",
+            gameWidth, gameHeight, View.Extra, outWidth, outHeight, View.X, View.Y, View.W, View.H,
+            View.CoreX, View.CoreX + View.CoreW, View.SX, View.SY);
+    }
+
+    // ---------------------------------------------------------------------------------
+    // Widescreen 2D overlay placement.
+    //
+    // The game draws its HUD as screen-space polygons with a constant depth value inside
+    // the 640x480 image. In widescreen that image sits in the middle of a wider one, so:
+    //   * pieces spanning (nearly) the full width - bars, fades - are stretched edge to edge;
+    //   * in races, pieces in the left/right third move to the left/right screen edge,
+    //     centred pieces stay. A draw call that sits on one side moves as a unit (e.g. the
+    //     minimap); a call spanning both sides (e.g. the numbers of both gauges) is split
+    //     into its connected pieces and each piece is placed on its own.
+    // Races are recognised by the gauge textures (needle/tick/odometer) being drawn.
+    // ---------------------------------------------------------------------------------
+
+    static u32 RaceHudFrames = 0;
+    static BOOL RaceHudSeen = FALSE;
+
+    void OverlayFrame(void)
+    {
+        if (RaceHudSeen) { RaceHudFrames = 30; }
+        else if (RaceHudFrames > 0) { RaceHudFrames--; }
+        RaceHudSeen = FALSE;
+    }
+
+    static BOOL IsRaceHudTexture(const char* name)
+    {
+        if (name == NULL) { return FALSE; }
+        return _strnicmp(name, "NEEDLE", 6) == 0 || _strnicmp(name, "TICK", 4) == 0 || _strnicmp(name, "ODOM", 4) == 0;
+    }
+
+    static f32 AnchorShift(const f32 x0, const f32 x1)
+    {
+        const f32 w = (f32)View.GameWidth;
+        const f32 c = (x0 + x1) * 0.5f;
+        if (c < w / 3.0f) { return -View.Extra; }
+        if (c > w * 2.0f / 3.0f) { return View.Extra; }
+        return 0.0f;
+    }
+
+    void PlaceOverlay(const f32* xs, const f32* ys, const u32 count, const u16* indexes, const u32 triangles,
+        const char* texture, f32* dx, f32* sx)
+    {
+        for (u32 i = 0; i < count; i++) { dx[i] = 0.0f; sx[i] = 1.0f; }
+        if (View.Extra <= 0.0f || count == 0) { return; }
+
+        if (IsRaceHudTexture(texture)) { RaceHudSeen = TRUE; }
+
+        const f32 w = (f32)View.GameWidth;
+        f32 x0 = 1e9f, x1 = -1e9f;
+        for (u32 i = 0; i < count; i++) { x0 = Min(x0, xs[i]); x1 = Max(x1, xs[i]); }
+
+        // Full-width element: stretch across the widescreen image.
+        if (x0 <= w * 0.03f && x1 >= w * 0.97f && (x1 - x0) >= w * 0.95f)
+        {
+            const f32 scale = (w + 2.0f * View.Extra) / w;
+            for (u32 i = 0; i < count; i++) { sx[i] = scale; dx[i] = -View.Extra; }
+            return;
+        }
+
+        // Solid-colour panels drawn as strips (menu title/footer bars are rows of 10px quads):
+        // a strip touching the left/right border of the 4:3 image is extended to the
+        // widescreen border, so the bar reaches the screen edge. Plain colour only, so
+        // nothing gets visibly stretched.
+        const BOOL solid = texture == NULL || texture[0] == '\0' || _strnicmp(texture, "BBWHITE", 7) == 0;
+        if (solid)
+        {
+            for (u32 i = 0; i < count; i++)
+            {
+                if (xs[i] <= 0.5f) { dx[i] = -View.Extra; }
+                else if (xs[i] >= w - 0.5f) { dx[i] = View.Extra; }
+            }
+        }
+
+        if (!Config.HudToEdges || (RaceHudFrames == 0 && !RaceHudSeen)) { return; }
+
+        // Whole call on one side: move it as a unit.
+        if ((x1 - x0) < w * 0.5f)
+        {
+            const f32 shift = AnchorShift(x0, x1);
+            if (shift != 0.0f) { for (u32 i = 0; i < count; i++) { dx[i] = shift; } }
+            return;
+        }
+
+        // Spans both sides: place each connected piece separately.
+        static u16 parent[4096];
+        if (count > 4096 || indexes == NULL) { return; }
+        for (u32 i = 0; i < count; i++) { parent[i] = (u16)i; }
+        auto find = [](u16 v) -> u16 { while (parent[v] != v) { parent[v] = parent[parent[v]]; v = parent[v]; } return v; };
+        for (u32 t = 0; t < triangles; t++)
+        {
+            const u16 a = indexes[t * 3 + 0], b = indexes[t * 3 + 1], c = indexes[t * 3 + 2];
+            if (a >= count || b >= count || c >= count) { continue; }
+            u16 ra = find(a), rb = find(b), rc = find(c);
+            if (ra != rb) { parent[rb] = ra; }
+            rc = find(c); ra = find(a);
+            if (ra != rc) { parent[rc] = ra; }
+        }
+
+        static f32 lo[4096], hi[4096];
+        for (u32 i = 0; i < count; i++) { lo[i] = 1e9f; hi[i] = -1e9f; }
+        for (u32 i = 0; i < count; i++) { const u16 r = find((u16)i); lo[r] = Min(lo[r], xs[i]); hi[r] = Max(hi[r], xs[i]); }
+        for (u32 i = 0; i < count; i++)
+        {
+            const u16 r = find((u16)i);
+            const f32 shift = AnchorShift(lo[r], hi[r]);
+            if (shift != 0.0f) { dx[i] = shift; }
+        }
+        (void)ys;
     }
 
     void PrepareWindow(const HWND hwnd, const u32 gameWidth, const u32 gameHeight, u32* outWidth, u32* outHeight)
@@ -217,6 +348,58 @@ namespace Evo
         return TRUE;
     }
 
+    // Draws Frame.Overlay over the 4:3 core rectangle (premultiplied blend, or opaque).
+    static void DrawOverlay(IDirect3DDevice9* device, const BOOL blend)
+    {
+        Frame.States->Capture();
+
+        struct QuadVertex { f32 X, Y, Z, RHW, U, V; };
+        const f32 x0 = (f32)View.CoreX - 0.5f, y0 = (f32)View.CoreY - 0.5f;
+        const f32 x1 = x0 + (f32)View.CoreW, y1 = y0 + (f32)View.CoreH;
+        const QuadVertex quad[4] =
+        {
+            { x0, y0, 0.0f, 1.0f, 0.0f, 0.0f },
+            { x1, y0, 0.0f, 1.0f, 1.0f, 0.0f },
+            { x0, y1, 0.0f, 1.0f, 0.0f, 1.0f },
+            { x1, y1, 0.0f, 1.0f, 1.0f, 1.0f },
+        };
+
+        device->BeginScene();
+        device->SetVertexShader(NULL);
+        device->SetPixelShader(NULL);
+        device->SetFVF(D3DFVF_XYZRHW | D3DFVF_TEX1);
+        device->SetRenderState(D3DRS_ZENABLE, D3DZB_FALSE);
+        device->SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
+        device->SetRenderState(D3DRS_FOGENABLE, FALSE);
+        device->SetRenderState(D3DRS_LIGHTING, FALSE);
+        device->SetRenderState(D3DRS_SPECULARENABLE, FALSE);
+        device->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
+        // Overlay is premultiplied (unchanged pixels are 0,0,0,0), so filtered edges blend cleanly.
+        device->SetRenderState(D3DRS_ALPHATESTENABLE, FALSE);
+        device->SetRenderState(D3DRS_ALPHABLENDENABLE, blend);
+        device->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ONE);
+        device->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
+        device->SetTexture(0, Frame.Overlay);
+        device->SetTexture(1, NULL);
+        device->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_SELECTARG1);
+        device->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
+        device->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_SELECTARG1);
+        device->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
+        device->SetTextureStageState(0, D3DTSS_TEXCOORDINDEX, 0);
+        device->SetTextureStageState(1, D3DTSS_COLOROP, D3DTOP_DISABLE);
+        device->SetTextureStageState(1, D3DTSS_ALPHAOP, D3DTOP_DISABLE);
+        const DWORD filter = Config.Filter2D ? D3DTEXF_LINEAR : D3DTEXF_POINT;
+        device->SetSamplerState(0, D3DSAMP_MAGFILTER, filter);
+        device->SetSamplerState(0, D3DSAMP_MINFILTER, filter);
+        device->SetSamplerState(0, D3DSAMP_MIPFILTER, D3DTEXF_NONE);
+        device->SetSamplerState(0, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP);
+        device->SetSamplerState(0, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP);
+        device->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, quad, sizeof(QuadVertex));
+        device->EndScene();
+
+        Frame.States->Apply();
+    }
+
     BOOL LockFrame(IDirect3DDevice9* device, const u32 bpp, u8** bits, u32* pitch)
     {
         if (Frame.Locked) { return FALSE; }
@@ -226,7 +409,7 @@ namespace Evo
         IDirect3DSurface9* back = NULL;
         if (device->GetRenderTarget(0, &back) == D3D_OK)
         {
-            const RECT source = { (LONG)View.X, (LONG)View.Y, (LONG)(View.X + View.W), (LONG)(View.Y + View.H) };
+            const RECT source = { (LONG)View.CoreX, (LONG)View.CoreY, (LONG)(View.CoreX + View.CoreW), (LONG)(View.CoreY + View.CoreH) };
             device->StretchRect(back, &source, Frame.Target, NULL, D3DTEXF_LINEAR);
             back->Release();
         }
@@ -316,52 +499,6 @@ namespace Evo
         if (changed == 0) { return; }
 
         // Composite the changed pixels over the HD frame.
-        Frame.States->Capture();
-
-        struct QuadVertex { f32 X, Y, Z, RHW, U, V; };
-        const f32 x0 = (f32)View.X - 0.5f, y0 = (f32)View.Y - 0.5f;
-        const f32 x1 = x0 + (f32)View.W, y1 = y0 + (f32)View.H;
-        const QuadVertex quad[4] =
-        {
-            { x0, y0, 0.0f, 1.0f, 0.0f, 0.0f },
-            { x1, y0, 0.0f, 1.0f, 1.0f, 0.0f },
-            { x0, y1, 0.0f, 1.0f, 0.0f, 1.0f },
-            { x1, y1, 0.0f, 1.0f, 1.0f, 1.0f },
-        };
-
-        device->BeginScene();
-        device->SetVertexShader(NULL);
-        device->SetPixelShader(NULL);
-        device->SetFVF(D3DFVF_XYZRHW | D3DFVF_TEX1);
-        device->SetRenderState(D3DRS_ZENABLE, D3DZB_FALSE);
-        device->SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
-        device->SetRenderState(D3DRS_FOGENABLE, FALSE);
-        device->SetRenderState(D3DRS_LIGHTING, FALSE);
-        device->SetRenderState(D3DRS_SPECULARENABLE, FALSE);
-        device->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
-        // Overlay is premultiplied (unchanged pixels are 0,0,0,0), so filtered edges blend cleanly.
-        device->SetRenderState(D3DRS_ALPHATESTENABLE, FALSE);
-        device->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
-        device->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ONE);
-        device->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
-        device->SetTexture(0, Frame.Overlay);
-        device->SetTexture(1, NULL);
-        device->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_SELECTARG1);
-        device->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
-        device->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_SELECTARG1);
-        device->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
-        device->SetTextureStageState(0, D3DTSS_TEXCOORDINDEX, 0);
-        device->SetTextureStageState(1, D3DTSS_COLOROP, D3DTOP_DISABLE);
-        device->SetTextureStageState(1, D3DTSS_ALPHAOP, D3DTOP_DISABLE);
-        const DWORD filter = Config.Filter2D ? D3DTEXF_LINEAR : D3DTEXF_POINT;
-        device->SetSamplerState(0, D3DSAMP_MAGFILTER, filter);
-        device->SetSamplerState(0, D3DSAMP_MINFILTER, filter);
-        device->SetSamplerState(0, D3DSAMP_MIPFILTER, D3DTEXF_NONE);
-        device->SetSamplerState(0, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP);
-        device->SetSamplerState(0, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP);
-        device->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, quad, sizeof(QuadVertex));
-        device->EndScene();
-
-        Frame.States->Apply();
+        DrawOverlay(device, TRUE);
     }
 }

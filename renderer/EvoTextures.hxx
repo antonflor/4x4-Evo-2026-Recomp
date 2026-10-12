@@ -1,7 +1,7 @@
 /*
 evo2026 — texture dumping and HD texture replacement.
 
-[evo2026] in .\system\render.ini:
+[evo2026] in .\system\evo2026.ini:
     DumpTextures=0      1 = save every texture the game uploads to .\textures_dump\
     ReplaceTextures=1   1 = load replacements from .\textures\
 

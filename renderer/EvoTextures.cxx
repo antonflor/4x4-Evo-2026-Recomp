@@ -118,8 +118,8 @@ namespace Evo::Textures
         if (Store.Initialized) { return; }
         Store.Initialized = TRUE;
 
-        Store.Dump = GetPrivateProfileIntA(EVO_SECTION, "DumpTextures", 0, EVO_INI);
-        Store.Replace = GetPrivateProfileIntA(EVO_SECTION, "ReplaceTextures", 1, EVO_INI);
+        Store.Dump = ReadSetting("DumpTextures", 0);
+        Store.Replace = ReadSetting("ReplaceTextures", 1);
 
         if (Store.Replace) { Scan(".\\textures"); }
         if (Store.Dump) { CreateDirectoryA(".\\textures_dump", NULL); }

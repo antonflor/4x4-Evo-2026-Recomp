@@ -9,7 +9,7 @@ What it does (all reversible with uninstall.ps1):
     file names, and the Direct3D 7 slot is the one evo2026 implements.
   * Sets system\metal.ini to the Direct3D renderer, 32-bit colour, 640x480 logical
     resolution (evo2026 draws that at your monitor's native resolution).
-  * Adds an [evo2026] section to system\render.ini with default settings.
+  * Writes default settings to system\evo2026.ini (keeps any values already there).
   * Marks 4x4.exe as DPI-aware for your user account so Windows doesn't blur it.
 #>
 param(
@@ -126,13 +126,14 @@ foreach ($dir in $systemDirs) {
         Write-Host "Updated $metalPath"
     }
 
-    $render = Get-ChildItem $dir -Filter 'render.ini' -ErrorAction SilentlyContinue | Select-Object -First 1
-    $renderPath = if ($render) { $render.FullName } else { Join-Path $dir 'RENDER.INI' }
-    Add-IniDefaults $renderPath 'evo2026' ([ordered]@{
+    # The game rewrites render.ini on exit, so evo2026 keeps its settings in a file of its own.
+    $evoPath = Join-Path $dir 'evo2026.ini'
+    Add-IniDefaults $evoPath 'evo2026' ([ordered]@{
         Width = '0'; Height = '0'; Window = '2'; Aspect = '1'; VSync = '1'
-        Anisotropy = '16'; Filter2D = '1'; DumpTextures = '0'; ReplaceTextures = '1'; Trace = '0'
+        Anisotropy = '16'; Filter2D = '1'; Widescreen = '1'; HudToEdges = '1'
+        DumpTextures = '0'; ReplaceTextures = '1'; Trace = '0'
     })
-    Write-Host "Updated $renderPath"
+    Write-Host "Updated $evoPath"
 }
 
 $textures = Join-Path $GamePath 'textures'
@@ -156,4 +157,4 @@ if (-not $NoCompat) {
 }
 
 Write-Host ''
-Write-Host 'Done. Launch 4x4.exe. Settings: system\render.ini, section [evo2026] (see README).'
+Write-Host 'Done. Launch 4x4.exe. Settings: system\evo2026.ini (see README).'

@@ -6,6 +6,8 @@ The game keeps running at its own 640×480 "logical" resolution, so menus and HU
 
 It also adds:
 
+- true widescreen (Hor+): a wider view at the sides on 16:9/21:9 screens, nothing stretched
+- the race HUD moved out to the screen edges in widescreen
 - borderless fullscreen
 - vsync
 - 16× anisotropic filtering
@@ -21,6 +23,7 @@ Built on the open-source [4x4e](https://github.com/americusmaximus/4x4e) reimple
    ```powershell
    powershell -ExecutionPolicy Bypass -File .\install.ps1 -GamePath "C:\Games\4x4 Evolution"
    ```
+   This writes `system\evo2026.ini` with the defaults below.
 4. **Launch `4x4.exe`.** The game shows its blue "4x4 Setup Options" screen on every start (that's the original design). Renderer should read **Direct3D 7** and 3D Card **evo2026 Direct3D 9**. Press Enter on **Run 4x4**.
 
 To go back to stock, run `uninstall.ps1 -GamePath "..."`.
@@ -31,13 +34,15 @@ The exe only accepts renderers by fixed file names. It compares `rendererDLLPath
 
 ## Settings
 
-The settings live in `system\render.ini`, section `[evo2026]`:
+The settings live in `system\evo2026.ini`, section `[evo2026]`. (They used to be in `render.ini`, but the game rewrites that file on exit and drops anything it doesn't know. An old `[evo2026]` section in `render.ini` is still read; `evo2026.ini` wins.)
 
 | Key | Default | Meaning |
 |---|---|---|
 | `Width` / `Height` | `0` | Output resolution. `0` = monitor's native resolution |
 | `Window` | `2` | `0` exclusive fullscreen · `1` window · `2` borderless fullscreen |
-| `Aspect` | `1` | `1` keep 4:3 with side bars · `0` stretch to fill |
+| `Widescreen` | `1` | `1` true widescreen: wider field of view, nothing stretched · `0` classic 4:3 |
+| `HudToEdges` | `1` | In widescreen, move the race HUD (lap times, map, gauges) to the screen edges · `0` keep it in the 4:3 area |
+| `Aspect` | `1` | With `Widescreen=0`: `1` keep 4:3 with side bars · `0` stretch to fill |
 | `VSync` | `1` | Sync to the monitor's refresh rate |
 | `Anisotropy` | `16` | Anisotropic filtering level (`0` = off) |
 | `Filter2D` | `1` | `1` smooth scaling of 2D framebuffer art · `0` sharp pixels |
@@ -48,6 +53,16 @@ The settings live in `system\render.ini`, section `[evo2026]`:
 Game-side settings are in `system\metal.ini` `[Graphics]`. Keep `gamePIXX=640`, `gamePIXY=480` and `gameBPP=32`.
 
 **Don't** set `gamePIXY` to 1080. The game's font code only accepts 4:3 heights (480, 600, 768, 864, 960, 1200) and stops with "Invalid screen resolution". The logical-resolution design is how evo2026 gets around that.
+
+## Widescreen
+
+The game projects its 3D world on the CPU for a 640×480 screen. evo2026 patches that in memory when the game starts (nothing on disk changes):
+
+- When the game sets its full-screen view, evo2026 widens the view rectangle left and right of the 4:3 image and narrows the camera's horizontal zoom by the same factor. You see more scenery at the sides; the vertical view and the proportions stay exactly as before ("Hor+").
+- The 2D layer stays 640×480. In races the HUD pieces in the left or right third (lap times, map, gauges) are moved to the matching screen edge; centred pieces (the checkpoint arrow, messages, the pause menu) stay centred. Menu title and footer bars are extended to the edges.
+- Loading screens, the vehicle preview box and other 4:3 artwork stay 4:3.
+
+The patch only applies to the exact Build 57 exe. Any other build fails a byte check and simply runs in classic 4:3.
 
 ## HD textures
 
@@ -79,15 +94,16 @@ The upscaler wrap-pads tileable terrain so it stays seamless, edge-pads atlases 
 
 ## Known limitations and next steps
 
-- **Widescreen is 4:3 with side bars** (or stretched). A true wider field of view needs a small patch to the exe's projection code. That's next on the list.
+- **Menus are 4:3 layouts** in widescreen: the 3D backgrounds and the title/footer bars fill the screen, but the menu text stays in the centre 4:3 area as designed.
 - **Lighting is still the original per-vertex lighting** baked by the game on the CPU. The exe also supports an unshipped hardware lighting renderer (`tridx8tl.dll`) with `setLightVector`, `setAmbientLight`, `addDynamicLight` and transform calls. That's the way into real per-pixel lighting.
-- **Intro videos and the setup screen** are drawn by the game's own DirectDraw code before the renderer starts, so they run at 640×480. They're unaffected by evo2026.
+- **Intro videos, the legal text and the setup screen** are drawn by the game's own DirectDraw code before the renderer starts. The game switches the display to 640×480 for them, as it always did, so expect your monitor to change mode briefly at startup. They're unaffected by evo2026.
 - **Mouse/gamepad** are unchanged from the original (DirectInput). Modern-controller support is a planned add-on.
 
 ## Troubleshooting
 
 - **The game runs at 320×240 or looks software-rendered.** `system\metal.ini` must say `rendererDLLPath=tridx7.dll` and `useDirect3D=1`. If the game is under Program Files, Windows may be using a copy in `%LOCALAPPDATA%\VirtualStore\…\system\metal.ini` instead.
 - **The image is blurry on a high-DPI screen.** The installer marks `4x4.exe` DPI-aware. Check Properties → Compatibility → "Change high DPI settings".
+- **The view looks wrong or the HUD is misplaced.** Set `Widescreen=0` (classic 4:3) or `HudToEdges=0`.
 - **Anything else:** set `Trace=1`, reproduce, and look at `system\evo2026.log`.
 
 ## Building from source

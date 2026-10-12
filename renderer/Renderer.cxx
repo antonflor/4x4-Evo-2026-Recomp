@@ -44,6 +44,8 @@ namespace Renderer::Module
 
     extern "C" u32 BeginScene(void)
     {
+        Evo::TraceFrame();
+        Evo::OverlayFrame();
         EVO_TRACE("BeginScene");
         if (State.DX.Scene.IsActive) { return FALSE; }
 
@@ -250,7 +252,19 @@ namespace Renderer::Module
 
     extern "C" u32 DrawPolygon2(const RPVX * *vertexes, const u32 vertexCount, const RendererMode mode)
     {
-        EVO_TRACE("DrawPolygon2");
+        if (Evo::TraceEnabled && Evo::TraceActive)
+        {
+            f32 x0 = 1e9f, x1 = -1e9f, y0 = 1e9f, y1 = -1e9f;
+            for (u32 i = 0; i < vertexCount; i++)
+            {
+                const f32 x = vertexes[i]->Unk05 / 65536.0f, y = vertexes[i]->Unk06 / 65536.0f;
+                x0 = Min(x0, x); x1 = Max(x1, x); y0 = Min(y0, y); y1 = Max(y1, y);
+            }
+            const auto t = State.DX.Textures.Surfaces.Staging[0];
+            const char* name = "-";
+            for (u32 i = 0; i < MAX_TEXTURE_COUNT; i++) { if (t != NULL && State.DX.Textures.Textures[i].Texture == t) { name = State.DX.Textures.Textures[i].Name; break; } }
+            EVO_TRACE("DrawPolygon2 v=%u mode=%x tex=%s x=%.1f..%.1f y=%.1f..%.1f", vertexCount, (u32)mode, name, x0, x1, y0, y1);
+        }
         if (!State.DX.Scene.IsActive) { return FALSE; }
 
         auto am = mode;
@@ -373,7 +387,21 @@ namespace Renderer::Module
 
     extern "C" u32 PolyListTL(const RCVX * vertexes, const u32 vertexCount, const u16 * indexes, const u32 indexCount, const RendererMode mode)
     {
-        EVO_TRACE("PolyListTL");
+        if (Evo::TraceEnabled && Evo::TraceActive)
+        {
+            f32 x0 = 1e9f, x1 = -1e9f, y0 = 1e9f, y1 = -1e9f, r0 = 1e9f, r1 = -1e9f;
+            for (u32 i = 0; i < vertexCount; i++)
+            {
+                x0 = Min(x0, vertexes[i].Unk06); x1 = Max(x1, vertexes[i].Unk06);
+                y0 = Min(y0, vertexes[i].Unk07); y1 = Max(y1, vertexes[i].Unk07);
+                r0 = Min(r0, vertexes[i].Unk04); r1 = Max(r1, vertexes[i].Unk04);
+            }
+            const auto t = State.DX.Textures.Surfaces.Staging[0];
+            const char* name = "-";
+            for (u32 i = 0; i < MAX_TEXTURE_COUNT; i++) { if (t != NULL && State.DX.Textures.Textures[i].Texture == t) { name = State.DX.Textures.Textures[i].Name; break; } }
+            EVO_TRACE("PolyListTL v=%u i=%u mode=%x tex=%s x=%.1f..%.1f y=%.1f..%.1f rhw=%.4f..%.4f",
+                vertexCount, indexCount, (u32)mode, name, x0, x1, y0, y1, r0, r1);
+        }
         if (!State.DX.Scene.IsActive) { return FALSE; }
 
         DX::SelectRendererMode(mode);
@@ -381,12 +409,32 @@ namespace Renderer::Module
         DX::SetRendererState(D3DRENDERSTATETYPE::D3DRS_CULLMODE, State.DX.Mode.Cull);
         DX::SetRendererState(D3DRENDERSTATETYPE::D3DRS_LIGHTING, FALSE);
 
+        // evo2026: 2D overlay (HUD) pieces have one constant, near depth; place them for widescreen.
+        static f32 hx[RENDERER_SIXTEEN_THOUSAND_ELEMENT_COUNT], hy[RENDERER_SIXTEEN_THOUSAND_ELEMENT_COUNT];
+        static f32 hdx[RENDERER_SIXTEEN_THOUSAND_ELEMENT_COUNT], hsx[RENDERER_SIXTEEN_THOUSAND_ELEMENT_COUNT];
+        BOOL overlay = FALSE;
+        if (Evo::View.Extra > 0.0f && vertexCount > 0 && vertexCount <= RENDERER_SIXTEEN_THOUSAND_ELEMENT_COUNT
+            && vertexes[0].Unk04 >= 0.3f)
+        {
+            overlay = TRUE;
+            for (u32 x = 0; x < vertexCount; x++)
+            {
+                if (vertexes[x].Unk04 != vertexes[0].Unk04) { overlay = FALSE; break; }
+                hx[x] = vertexes[x].Unk06; hy[x] = vertexes[x].Unk07;
+            }
+            if (overlay)
+            {
+                const char* name = State.DX.Surfaces.Index < MAX_TEXTURE_COUNT ? State.DX.Textures.Textures[State.DX.Surfaces.Index].Name : NULL;
+                Evo::PlaceOverlay(hx, hy, vertexCount, indexes, indexCount, name, hdx, hsx);
+            }
+        }
+
         for (u32 x = 0; x < vertexCount; x++)
         {
             const auto input = &vertexes[x];
             auto vertex = &State.DX.Data.RTLVX.Vertexes[x];
 
-            vertex->XYZ.X = Evo::MapX(input->Unk06);
+            vertex->XYZ.X = Evo::MapX(overlay ? input->Unk06 * hsx[x] + hdx[x] : input->Unk06);
             vertex->XYZ.Y = Evo::MapY(input->Unk07);
             vertex->XYZ.Z = 1.0f - input->Unk04;
 

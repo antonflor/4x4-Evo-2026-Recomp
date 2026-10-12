@@ -23,6 +23,8 @@ SOFTWARE.
 #include "DX.hxx"
 #include "Module.hxx"
 #include "Trace.hxx"
+#include "Evo.hxx"
+#include "EvoHooks.hxx"
 
 #define UNKNOWN_DEVICE_NAME "Unknown Device"
 
@@ -78,6 +80,9 @@ namespace Renderer::Module
 
     extern "C" u32 Init(const HWND hwnd, const RendererModuleInitializeArguments * args)
     {
+        // evo2026: hook the game's camera for widescreen as early as possible.
+        if (Evo::ReadSetting("Widescreen", 1)) { Evo::Hooks::Install(); }
+
         EVO_TRACE("Init");
         Kill();
 
