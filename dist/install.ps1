@@ -1,0 +1,154 @@
+<#
+evo2026 installer for 4x4 Evolution (Build 57).
+
+    powershell -ExecutionPolicy Bypass -File .\install.ps1 -GamePath "C:\Games\4x4 Evolution"
+
+What it does (all reversible with uninstall.ps1):
+  * Backs up the game's TRIDX7.DLL to TRIDX7.original.dll (once).
+  * Installs evo2026.dll as TRIDX7.DLL. The game only accepts renderers by these exact
+    file names, and the Direct3D 7 slot is the one evo2026 implements.
+  * Sets system\metal.ini to the Direct3D renderer, 32-bit colour, 640x480 logical
+    resolution (evo2026 draws that at your monitor's native resolution).
+  * Adds an [evo2026] section to system\render.ini with default settings.
+  * Marks 4x4.exe as DPI-aware for your user account so Windows doesn't blur it.
+#>
+param(
+    [string]$GamePath,
+    [switch]$NoCompat
+)
+
+$ErrorActionPreference = 'Stop'
+$here = Split-Path -Parent $MyInvocation.MyCommand.Path
+
+function Find-Game {
+    $candidates = @(
+        'C:\Games\4x4 Evolution',
+        (Join-Path ${env:ProgramFiles(x86)} 'Terminal Reality\4x4 Evolution'),
+        (Join-Path $env:ProgramFiles 'Terminal Reality\4x4 Evolution'),
+        'C:\Program Files\Terminal Reality\4x4 Evolution'
+    )
+    foreach ($c in $candidates) { if ($c -and (Test-Path (Join-Path $c '4x4.exe'))) { return $c } }
+    return $null
+}
+
+function Set-IniValue([string]$Path, [string]$Section, [string]$Key, [string]$Value) {
+    $lines = New-Object System.Collections.Generic.List[string]
+    if (Test-Path $Path) { foreach ($l in [System.IO.File]::ReadAllLines($Path)) { $lines.Add($l) } }
+
+    $start = -1
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i].Trim() -ieq "[$Section]") { $start = $i; break }
+    }
+    if ($start -lt 0) {
+        if ($lines.Count -gt 0 -and $lines[$lines.Count - 1].Trim() -ne '') { $lines.Add('') }
+        $lines.Add("[$Section]"); $lines.Add("$Key=$Value")
+    } else {
+        $end = $lines.Count
+        for ($i = $start + 1; $i -lt $lines.Count; $i++) { if ($lines[$i].Trim().StartsWith('[')) { $end = $i; break } }
+        $found = $false
+        for ($i = $start + 1; $i -lt $end; $i++) {
+            if ($lines[$i] -match "^\s*$([regex]::Escape($Key))\s*=") { $lines[$i] = "$Key=$Value"; $found = $true; break }
+        }
+        if (-not $found) {
+            $insert = $end
+            while ($insert -gt $start + 1 -and $lines[$insert - 1].Trim() -eq '') { $insert-- }
+            $lines.Insert($insert, "$Key=$Value")
+        }
+    }
+    [System.IO.File]::WriteAllLines($Path, $lines.ToArray(), [System.Text.Encoding]::ASCII)
+}
+
+function Get-IniValue([string]$Path, [string]$Section, [string]$Key) {
+    if (-not (Test-Path $Path)) { return $null }
+    $inSection = $false
+    foreach ($l in [System.IO.File]::ReadAllLines($Path)) {
+        $t = $l.Trim()
+        if ($t.StartsWith('[')) { $inSection = ($t -ieq "[$Section]"); continue }
+        if ($inSection -and $t -match "^$([regex]::Escape($Key))\s*=(.*)$") { return $Matches[1].Trim() }
+    }
+    return $null
+}
+
+function Add-IniDefaults([string]$Path, [string]$Section, [System.Collections.IDictionary]$Values) {
+    foreach ($k in $Values.Keys) {
+        # only add keys the user hasn't set already
+        if ($null -eq (Get-IniValue $Path $Section $k)) { Set-IniValue $Path $Section $k $Values[$k] }
+    }
+}
+
+if (-not $GamePath) { $GamePath = Find-Game }
+if (-not $GamePath) { $GamePath = Read-Host 'Folder that contains 4x4.exe' }
+$GamePath = $GamePath.Trim('"')
+$exe = Join-Path $GamePath '4x4.exe'
+if (-not (Test-Path $exe)) { throw "4x4.exe not found in '$GamePath'." }
+
+Write-Host "4x4 Evolution: $GamePath"
+
+if ((Get-Item $exe).Length -ne 2238976) {
+    Write-Warning 'This 4x4.exe is not Build 57. Install the Build 57 patch (4x4patchGB57.exe) first; evo2026 is built for Build 57.'
+}
+
+$programFolders = @($env:ProgramFiles, ${env:ProgramFiles(x86)}) | Where-Object { $_ }
+if ($programFolders | Where-Object { $GamePath -like "$_*" }) {
+    Write-Warning 'The game is under Program Files. Windows redirects its saves/settings to a VirtualStore copy; this script updates both, but installing to C:\Games is simpler.'
+}
+
+$ourDll = Join-Path $here 'bin\evo2026.dll'
+if (-not (Test-Path $ourDll)) { throw "Missing $ourDll" }
+$target = Join-Path $GamePath 'TRIDX7.DLL'
+$backup = Join-Path $GamePath 'TRIDX7.original.dll'
+
+if ((Test-Path $target) -and -not (Test-Path $backup)) {
+    if ((Get-FileHash $target).Hash -ne (Get-FileHash $ourDll).Hash) {
+        Copy-Item $target $backup
+        Write-Host 'Backed up the original renderer to TRIDX7.original.dll'
+    }
+}
+Copy-Item $ourDll $target -Force
+Write-Host 'Installed evo2026 renderer as TRIDX7.DLL'
+
+$systemDirs = @(Join-Path $GamePath 'system')
+$virtual = $GamePath -replace '^[A-Za-z]:\\', ''
+$vs = Join-Path $env:LOCALAPPDATA ("VirtualStore\" + $virtual + "\system")
+if (Test-Path $vs) { $systemDirs += $vs }
+
+foreach ($dir in $systemDirs) {
+    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir | Out-Null }
+
+    $metal = Get-ChildItem $dir -Filter 'metal.ini' -ErrorAction SilentlyContinue | Select-Object -First 1
+    $metalPath = if ($metal) { $metal.FullName } else { Join-Path $dir 'METAL.INI' }
+    if (Test-Path $metalPath) {
+        Set-IniValue $metalPath 'Graphics' 'rendererDLLPath' 'tridx7.dll'
+        Set-IniValue $metalPath 'Graphics' 'useDirect3D' '1'
+        Set-IniValue $metalPath 'Graphics' 'gameBPP' '32'
+        Set-IniValue $metalPath 'Graphics' 'gamePIXX' '640'
+        Set-IniValue $metalPath 'Graphics' 'gamePIXY' '480'
+        Write-Host "Updated $metalPath"
+    }
+
+    $render = Get-ChildItem $dir -Filter 'render.ini' -ErrorAction SilentlyContinue | Select-Object -First 1
+    $renderPath = if ($render) { $render.FullName } else { Join-Path $dir 'RENDER.INI' }
+    Add-IniDefaults $renderPath 'evo2026' ([ordered]@{
+        Width = '0'; Height = '0'; Window = '2'; Aspect = '1'; VSync = '1'
+        Anisotropy = '16'; Filter2D = '1'; DumpTextures = '0'; ReplaceTextures = '1'; Trace = '0'
+    })
+    Write-Host "Updated $renderPath"
+}
+
+$textures = Join-Path $GamePath 'textures'
+if (-not (Test-Path $textures)) { New-Item -ItemType Directory -Path $textures | Out-Null }
+$pack = Join-Path $here 'textures'
+if (Test-Path $pack) {
+    Copy-Item (Join-Path $pack '*') $textures -Recurse -Force
+    Write-Host "Copied HD textures to $textures"
+}
+
+if (-not $NoCompat) {
+    $layers = 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers'
+    if (-not (Test-Path $layers)) { New-Item -Path $layers -Force | Out-Null }
+    New-ItemProperty -Path $layers -Name $exe -Value '~ HIGHDPIAWARE' -PropertyType String -Force | Out-Null
+    Write-Host 'Marked 4x4.exe as DPI-aware (Properties > Compatibility shows this).'
+}
+
+Write-Host ''
+Write-Host 'Done. Launch 4x4.exe. Settings: system\render.ini, section [evo2026] (see README).'
