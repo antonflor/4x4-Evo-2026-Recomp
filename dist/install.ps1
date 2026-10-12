@@ -142,6 +142,11 @@ if (Test-Path $pack) {
     Copy-Item (Join-Path $pack '*') $textures -Recurse -Force
     Write-Host "Copied HD textures to $textures"
 }
+$zips = @(Get-ChildItem $here -Filter 'textures-*.zip' -ErrorAction SilentlyContinue)
+foreach ($z in $zips) {
+    Expand-Archive -Path $z.FullName -DestinationPath $textures -Force
+    Write-Host "Unpacked $($z.Name) into $textures"
+}
 
 if (-not $NoCompat) {
     $layers = 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers'
