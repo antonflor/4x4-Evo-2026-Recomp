@@ -3,7 +3,7 @@
 ; Build: ISCC.exe 4x4Evolution2026.iss   (Inno Setup 6.4+)
 
 #define AppName      "4x4 Evolution 2026 Edition"
-#define AppVersion   "1.0.0"
+#define AppVersion   "1.1.0"
 #define AppPublisher "MontyLabs"
 #define AppExe       "4x4.exe"
 
@@ -54,6 +54,7 @@ Source: "payload\game\*"; DestDir: "{app}"; Excludes: "\system\*,\textures\*"; F
 ; Settings/profiles: keep the user's copies on reinstall (keys are enforced below in [INI])
 Source: "payload\game\system\METAL.INI"; DestDir: "{app}\system"; Flags: onlyifdoesntexist
 Source: "payload\game\system\RENDER.INI"; DestDir: "{app}\system"; Flags: onlyifdoesntexist
+Source: "payload\game\system\evo2026.ini"; DestDir: "{app}\system"; Flags: onlyifdoesntexist
 ; HD textures (PNG is already compressed)
 Source: "payload\game\textures\*"; DestDir: "{app}\textures"; Flags: ignoreversion nocompression
 
@@ -64,17 +65,20 @@ Filename: "{app}\system\METAL.INI"; Section: "Graphics"; Key: "useDirect3D"; Str
 Filename: "{app}\system\METAL.INI"; Section: "Graphics"; Key: "gameBPP"; String: "32"
 Filename: "{app}\system\METAL.INI"; Section: "Graphics"; Key: "gamePIXX"; String: "640"
 Filename: "{app}\system\METAL.INI"; Section: "Graphics"; Key: "gamePIXY"; String: "480"
-; evo2026 defaults - only added when missing, so the user's tweaks survive a reinstall
-Filename: "{app}\system\RENDER.INI"; Section: "evo2026"; Key: "Width"; String: "0"; Flags: createkeyifdoesntexist
-Filename: "{app}\system\RENDER.INI"; Section: "evo2026"; Key: "Height"; String: "0"; Flags: createkeyifdoesntexist
-Filename: "{app}\system\RENDER.INI"; Section: "evo2026"; Key: "Window"; String: "2"; Flags: createkeyifdoesntexist
-Filename: "{app}\system\RENDER.INI"; Section: "evo2026"; Key: "Aspect"; String: "1"; Flags: createkeyifdoesntexist
-Filename: "{app}\system\RENDER.INI"; Section: "evo2026"; Key: "VSync"; String: "1"; Flags: createkeyifdoesntexist
-Filename: "{app}\system\RENDER.INI"; Section: "evo2026"; Key: "Anisotropy"; String: "16"; Flags: createkeyifdoesntexist
-Filename: "{app}\system\RENDER.INI"; Section: "evo2026"; Key: "Filter2D"; String: "1"; Flags: createkeyifdoesntexist
-Filename: "{app}\system\RENDER.INI"; Section: "evo2026"; Key: "ReplaceTextures"; String: "1"; Flags: createkeyifdoesntexist
-Filename: "{app}\system\RENDER.INI"; Section: "evo2026"; Key: "DumpTextures"; String: "0"; Flags: createkeyifdoesntexist
-Filename: "{app}\system\RENDER.INI"; Section: "evo2026"; Key: "Trace"; String: "0"; Flags: createkeyifdoesntexist
+; evo2026 settings live in system\evo2026.ini (the game rewrites render.ini on exit).
+; Keys are only added when missing, so the user's tweaks survive a reinstall/upgrade.
+Filename: "{app}\system\evo2026.ini"; Section: "evo2026"; Key: "Width"; String: "0"; Flags: createkeyifdoesntexist
+Filename: "{app}\system\evo2026.ini"; Section: "evo2026"; Key: "Height"; String: "0"; Flags: createkeyifdoesntexist
+Filename: "{app}\system\evo2026.ini"; Section: "evo2026"; Key: "Window"; String: "2"; Flags: createkeyifdoesntexist
+Filename: "{app}\system\evo2026.ini"; Section: "evo2026"; Key: "Aspect"; String: "1"; Flags: createkeyifdoesntexist
+Filename: "{app}\system\evo2026.ini"; Section: "evo2026"; Key: "VSync"; String: "1"; Flags: createkeyifdoesntexist
+Filename: "{app}\system\evo2026.ini"; Section: "evo2026"; Key: "Anisotropy"; String: "16"; Flags: createkeyifdoesntexist
+Filename: "{app}\system\evo2026.ini"; Section: "evo2026"; Key: "Filter2D"; String: "1"; Flags: createkeyifdoesntexist
+Filename: "{app}\system\evo2026.ini"; Section: "evo2026"; Key: "Widescreen"; String: "1"; Flags: createkeyifdoesntexist
+Filename: "{app}\system\evo2026.ini"; Section: "evo2026"; Key: "HudToEdges"; String: "1"; Flags: createkeyifdoesntexist
+Filename: "{app}\system\evo2026.ini"; Section: "evo2026"; Key: "ReplaceTextures"; String: "1"; Flags: createkeyifdoesntexist
+Filename: "{app}\system\evo2026.ini"; Section: "evo2026"; Key: "DumpTextures"; String: "0"; Flags: createkeyifdoesntexist
+Filename: "{app}\system\evo2026.ini"; Section: "evo2026"; Key: "Trace"; String: "0"; Flags: createkeyifdoesntexist
 
 [Registry]
 ; Stop Windows from DPI-scaling (blurring) the game window.
@@ -82,7 +86,7 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags
 
 [Icons]
 Name: "{group}\4x4 Evolution"; Filename: "{app}\{#AppExe}"; WorkingDir: "{app}"
-Name: "{group}\evo2026 Settings"; Filename: "{win}\notepad.exe"; Parameters: """{app}\system\RENDER.INI"""; WorkingDir: "{app}"
+Name: "{group}\evo2026 Settings"; Filename: "{win}\notepad.exe"; Parameters: """{app}\system\evo2026.ini"""; WorkingDir: "{app}"
 Name: "{group}\Read Me"; Filename: "{win}\notepad.exe"; Parameters: """{app}\evo2026\README.txt"""; WorkingDir: "{app}"
 Name: "{group}\{cm:UninstallProgram,{#AppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\4x4 Evolution"; Filename: "{app}\{#AppExe}"; WorkingDir: "{app}"; Tasks: desktopicon
@@ -92,6 +96,8 @@ Filename: "{win}\notepad.exe"; Parameters: """{app}\evo2026\README.txt"""; Descr
 Filename: "{app}\{#AppExe}"; WorkingDir: "{app}"; Description: "{cm:LaunchProgram,4x4 Evolution}"; Flags: postinstall nowait skipifsilent
 
 [UninstallDelete]
+Type: files; Name: "{app}\system\evo2026.ini"
+Type: files; Name: "{app}\system\evo2026.log"
 Type: filesandordirs; Name: "{app}\textures_dump"
 Type: files; Name: "{app}\system\evo2026.log"
 

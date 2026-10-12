@@ -6,6 +6,10 @@ its own 640x480 layout, and everything is drawn at your monitor's native
 resolution (1080p, 1440p, 4K) in a borderless window, with 16x anisotropic
 filtering and AI-upscaled HD textures for the Arizona track and the trucks.
 
+On widescreen monitors you get true widescreen: more of the scenery at the
+sides (nothing is stretched), with the race HUD - lap times, map and gauges -
+out at the screen edges.
+
 Already set up by the installer:
   - Build 57 patch applied
   - evo2026 installed as TRIDX7.DLL (the game only accepts renderers by this
@@ -17,11 +21,15 @@ Already set up by the installer:
 
 SETTINGS  (Start menu > 4x4 Evolution 2026 > evo2026 Settings)
 --------
-The file is system\render.ini, section [evo2026]:
+The file is system\evo2026.ini, section [evo2026]:
 
   Width / Height   0         output resolution, 0 = monitor's native
   Window           2         0 exclusive fullscreen, 1 window, 2 borderless
-  Aspect           1         1 keep 4:3 with side bars, 0 stretch to fill
+  Widescreen       1         1 true widescreen (wider view), 0 classic 4:3
+  HudToEdges       1         1 race HUD at the screen edges, 0 keep it in the
+                             middle 4:3 area
+  Aspect           1         with Widescreen=0: 1 keep 4:3 with side bars,
+                             0 stretch to fill
   VSync            1         sync to the monitor's refresh rate
   Anisotropy       16        texture filtering level (0 = off)
   Filter2D         1         1 smooth 2D scaling, 0 sharp pixels
@@ -61,11 +69,13 @@ TROUBLESHOOTING
 - Blurry on a high-DPI screen: 4x4.exe > Properties > Compatibility >
   Change high DPI settings > "Override high DPI scaling" = Application.
 - Back to the stock renderer: copy TRIDX7.original.dll over TRIDX7.DLL.
+- View or HUD looks wrong: set Widescreen=0 (classic 4:3) or HudToEdges=0.
 - Anything else: set Trace=1, reproduce, look at system\evo2026.log.
 
-Known limits: widescreen is 4:3 with side bars for now (a wider field of view
-needs an exe patch); intro videos and the setup screen run at 640x480;
-lighting is the original 2000 lighting.
+Known limits: menus keep their 4:3 layout in the middle of the screen (the
+backgrounds and title bars fill the width); intro videos and the setup screen
+are the game's own 640x480 DirectDraw screens, so the display switches to
+640x480 for them at startup; lighting is the original 2000 lighting.
 
 
 CREDITS & LICENSES
