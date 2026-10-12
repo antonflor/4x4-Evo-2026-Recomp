@@ -83,6 +83,7 @@ namespace DX
         u32 ActualDimensions;
         D3DFORMAT Format;
         char Name[MAX_TEXTURE_CACHE_ITEM_NAME_LENGTH];
+        BOOL IsReplaced; // evo2026: Texture is an HD replacement, not the game's original
     };
 
     struct DXState

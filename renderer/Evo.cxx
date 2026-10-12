@@ -86,6 +86,23 @@ namespace Evo
             if (fn != NULL) { fn(); }
         }
 
+        // The game's own startup code (setup screen, videos) may have switched the display to
+        // 640x480. Use the user's saved desktop mode, and restore it for windowed/borderless play.
+        {
+            DEVMODEA saved; ZeroMemory(&saved, sizeof(saved)); saved.dmSize = sizeof(saved);
+            DEVMODEA current; ZeroMemory(&current, sizeof(current)); current.dmSize = sizeof(current);
+
+            if (Config.Window != 0
+                && EnumDisplaySettingsA(NULL, ENUM_REGISTRY_SETTINGS, &saved)
+                && EnumDisplaySettingsA(NULL, ENUM_CURRENT_SETTINGS, &current)
+                && (saved.dmPelsWidth != current.dmPelsWidth || saved.dmPelsHeight != current.dmPelsHeight))
+            {
+                EVO_TRACE("evo2026: restoring desktop mode %ux%u (was %ux%u)",
+                    (u32)saved.dmPelsWidth, (u32)saved.dmPelsHeight, (u32)current.dmPelsWidth, (u32)current.dmPelsHeight);
+                ChangeDisplaySettingsA(NULL, 0);
+            }
+        }
+
         MONITORINFO mi;
         ZeroMemory(&mi, sizeof(mi));
         mi.cbSize = sizeof(mi);
@@ -156,23 +173,24 @@ namespace Evo
     static struct
     {
         IDirect3DSurface9* Target = NULL;   // GameWidth x GameHeight render target (downscaled copy)
-        IDirect3DSurface9* System = NULL;   // system-memory copy the game writes into
+        IDirect3DSurface9* System = NULL;   // system-memory readback of Target
         IDirect3DTexture9* Overlay = NULL;  // changed pixels, uploaded for compositing
         IDirect3DStateBlock9* States = NULL;
-        u8* Before = NULL;
-        u32 Width = 0, Height = 0, BPP = 0;
+        u8* Pixels = NULL;                  // what the game draws into (its own pixel format)
+        u8* Before = NULL;                  // copy of Pixels taken at lock time
+        u32 Width = 0, Height = 0, BPP = 0, Pitch = 0;
         BOOL Locked = FALSE;
     } Frame;
 
     void ReleaseFrame(void)
     {
-        if (Frame.Locked && Frame.System != NULL) { Frame.System->UnlockRect(); }
         if (Frame.Target != NULL) { Frame.Target->Release(); Frame.Target = NULL; }
         if (Frame.System != NULL) { Frame.System->Release(); Frame.System = NULL; }
         if (Frame.Overlay != NULL) { Frame.Overlay->Release(); Frame.Overlay = NULL; }
         if (Frame.States != NULL) { Frame.States->Release(); Frame.States = NULL; }
+        if (Frame.Pixels != NULL) { free(Frame.Pixels); Frame.Pixels = NULL; }
         if (Frame.Before != NULL) { free(Frame.Before); Frame.Before = NULL; }
-        Frame.Width = Frame.Height = Frame.BPP = 0;
+        Frame.Width = Frame.Height = Frame.BPP = Frame.Pitch = 0;
         Frame.Locked = FALSE;
     }
 
@@ -182,19 +200,19 @@ namespace Evo
 
         ReleaseFrame();
 
-        const D3DFORMAT format = bpp == 16 ? D3DFMT_R5G6B5 : D3DFMT_X8R8G8B8;
-
-        if (device->CreateRenderTarget(View.GameWidth, View.GameHeight, format, D3DMULTISAMPLE_NONE, 0, FALSE, &Frame.Target, NULL) != D3D_OK) { ReleaseFrame(); return FALSE; }
-        if (device->CreateOffscreenPlainSurface(View.GameWidth, View.GameHeight, format, D3DPOOL_SYSTEMMEM, &Frame.System, NULL) != D3D_OK) { ReleaseFrame(); return FALSE; }
+        if (device->CreateRenderTarget(View.GameWidth, View.GameHeight, D3DFMT_X8R8G8B8, D3DMULTISAMPLE_NONE, 0, FALSE, &Frame.Target, NULL) != D3D_OK) { ReleaseFrame(); return FALSE; }
+        if (device->CreateOffscreenPlainSurface(View.GameWidth, View.GameHeight, D3DFMT_X8R8G8B8, D3DPOOL_SYSTEMMEM, &Frame.System, NULL) != D3D_OK) { ReleaseFrame(); return FALSE; }
         if (device->CreateTexture(View.GameWidth, View.GameHeight, 1, D3DUSAGE_DYNAMIC, D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT, &Frame.Overlay, NULL) != D3D_OK) { ReleaseFrame(); return FALSE; }
         if (device->CreateStateBlock(D3DSBT_ALL, &Frame.States) != D3D_OK) { ReleaseFrame(); return FALSE; }
 
-        Frame.Before = (u8*)malloc((size_t)View.GameWidth * View.GameHeight * (bpp / 8));
-        if (Frame.Before == NULL) { ReleaseFrame(); return FALSE; }
-
         Frame.Width = View.GameWidth;
         Frame.Height = View.GameHeight;
-        Frame.BPP = bpp;
+        Frame.BPP = bpp == 16 ? 16 : 32;
+        Frame.Pitch = Frame.Width * (Frame.BPP / 8);
+
+        Frame.Pixels = (u8*)malloc((size_t)Frame.Pitch * Frame.Height);
+        Frame.Before = (u8*)malloc((size_t)Frame.Pitch * Frame.Height);
+        if (Frame.Pixels == NULL || Frame.Before == NULL) { ReleaseFrame(); return FALSE; }
 
         return TRUE;
     }
@@ -204,28 +222,45 @@ namespace Evo
         if (Frame.Locked) { return FALSE; }
         if (!EnsureFrame(device, bpp)) { return FALSE; }
 
+        // Give the game a GameWidth x GameHeight copy of the current (HD) frame.
         IDirect3DSurface9* back = NULL;
-        if (device->GetRenderTarget(0, &back) != D3D_OK) { return FALSE; }
-
-        const RECT source = { (LONG)View.X, (LONG)View.Y, (LONG)(View.X + View.W), (LONG)(View.Y + View.H) };
-        device->StretchRect(back, &source, Frame.Target, NULL, D3DTEXF_LINEAR);
-        back->Release();
-
-        device->GetRenderTargetData(Frame.Target, Frame.System);
-
-        D3DLOCKED_RECT rect;
-        if (Frame.System->LockRect(&rect, NULL, 0) != D3D_OK) { return FALSE; }
-
-        const u32 row = Frame.Width * (bpp / 8);
-        for (u32 y = 0; y < Frame.Height; y++)
+        if (device->GetRenderTarget(0, &back) == D3D_OK)
         {
-            memcpy(Frame.Before + (size_t)y * row, (u8*)rect.pBits + (size_t)y * rect.Pitch, row);
+            const RECT source = { (LONG)View.X, (LONG)View.Y, (LONG)(View.X + View.W), (LONG)(View.Y + View.H) };
+            device->StretchRect(back, &source, Frame.Target, NULL, D3DTEXF_LINEAR);
+            back->Release();
         }
 
-        Frame.Locked = TRUE;
+        D3DLOCKED_RECT rect;
+        if (device->GetRenderTargetData(Frame.Target, Frame.System) == D3D_OK
+            && Frame.System->LockRect(&rect, NULL, D3DLOCK_READONLY) == D3D_OK)
+        {
+            for (u32 y = 0; y < Frame.Height; y++)
+            {
+                const u32* in = (const u32*)((const u8*)rect.pBits + (size_t)y * rect.Pitch);
+                u8* out = Frame.Pixels + (size_t)y * Frame.Pitch;
 
-        *bits = (u8*)rect.pBits;
-        *pitch = (u32)rect.Pitch;
+                if (Frame.BPP == 32) { memcpy(out, in, Frame.Pitch); continue; }
+
+                u16* o = (u16*)out;
+                for (u32 x = 0; x < Frame.Width; x++)
+                {
+                    const u32 c = in[x];
+                    o[x] = (u16)(((c >> 8) & 0xf800) | ((c >> 5) & 0x07e0) | ((c >> 3) & 0x001f));
+                }
+            }
+            Frame.System->UnlockRect();
+        }
+        else
+        {
+            memset(Frame.Pixels, 0, (size_t)Frame.Pitch * Frame.Height);
+        }
+
+        memcpy(Frame.Before, Frame.Pixels, (size_t)Frame.Pitch * Frame.Height);
+
+        Frame.Locked = TRUE;
+        *bits = Frame.Pixels;
+        *pitch = Frame.Pitch;
 
         return TRUE;
     }
@@ -233,34 +268,26 @@ namespace Evo
     void UnlockFrame(IDirect3DDevice9* device)
     {
         if (!Frame.Locked) { return; }
-
         Frame.Locked = FALSE;
 
-        // The game has finished writing; reopen the system copy read-only to diff it.
-        D3DLOCKED_RECT src;
-        Frame.System->UnlockRect();
-        if (Frame.System->LockRect(&src, NULL, D3DLOCK_READONLY) != D3D_OK) { return; }
-
         D3DLOCKED_RECT dst;
-        if (Frame.Overlay->LockRect(0, &dst, NULL, D3DLOCK_DISCARD) != D3D_OK) { Frame.System->UnlockRect(); return; }
+        if (Frame.Overlay->LockRect(0, &dst, NULL, D3DLOCK_DISCARD) != D3D_OK) { return; }
 
         u32 changed = 0;
-        const u32 bytes = Frame.BPP / 8;
-        const u32 row = Frame.Width * bytes;
 
         for (u32 y = 0; y < Frame.Height; y++)
         {
-            const u8* now = (const u8*)src.pBits + (size_t)y * src.Pitch;
-            const u8* was = Frame.Before + (size_t)y * row;
+            const u8* now = Frame.Pixels + (size_t)y * Frame.Pitch;
+            const u8* was = Frame.Before + (size_t)y * Frame.Pitch;
             u32* out = (u32*)((u8*)dst.pBits + (size_t)y * dst.Pitch);
 
-            if (memcmp(now, was, row) == 0)
+            if (memcmp(now, was, Frame.Pitch) == 0)
             {
                 memset(out, 0, (size_t)Frame.Width * 4);
                 continue;
             }
 
-            if (bytes == 2)
+            if (Frame.BPP == 16)
             {
                 const u16* n = (const u16*)now; const u16* w = (const u16*)was;
                 for (u32 x = 0; x < Frame.Width; x++)
@@ -285,7 +312,6 @@ namespace Evo
         }
 
         Frame.Overlay->UnlockRect(0);
-        Frame.System->UnlockRect();
 
         if (changed == 0) { return; }
 

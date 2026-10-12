@@ -22,6 +22,7 @@ SOFTWARE.
 
 #include "DX.hxx"
 #include "Evo.hxx"
+#include "EvoTextures.hxx"
 #include "Module.hxx"
 #include "Quit.hxx"
 
@@ -165,6 +166,7 @@ namespace DX
     void Release(void)
     {
         Evo::ReleaseFrame();
+        Evo::Textures::Release();
 
         for (u32 x = 0; x < MAX_MIP_MAP_SURFACE_COUNT; x++)
         {

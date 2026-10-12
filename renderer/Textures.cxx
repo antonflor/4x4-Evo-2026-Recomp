@@ -25,6 +25,7 @@ SOFTWARE.
 #include "Trace.hxx"
 #include "Quit.hxx"
 #include "Textures.hxx"
+#include "EvoTextures.hxx"
 
 using namespace Mathematics;
 using namespace Renderer::Module;
@@ -227,6 +228,31 @@ namespace DX
 
         ConvertTexture();
 
+        // evo2026: dump / swap in an HD replacement keyed by the texture's name + pixel CRC.
+        {
+            auto replacement = Evo::Textures::Process(State.DX.DirectX.Device, tex->Name,
+                &State.DX.Pixels.Pixels[0], State.DX.Surfaces.Dimensions, tex->IsOpaque);
+
+            if (replacement != NULL)
+            {
+                if (tex->Texture != NULL) { tex->Texture->Release(); }
+                tex->Texture = replacement;
+                tex->IsReplaced = TRUE;
+                return;
+            }
+
+            if (tex->IsReplaced)
+            {
+                // The game changed this texture's pixels and there is no replacement for the new
+                // content: go back to an original-sized texture before uploading.
+                RendererTexture original;
+                ZeroMemory(&original, sizeof(original));
+                original.Index = (u32)(tex - &State.DX.Textures.Textures[0]);
+                strncpy(original.Name, tex->Name, sizeof(original.Name) - 1);
+                CreateTexture(State.DX.Surfaces.Dimensions, tex->IsOpaque, &original);
+            }
+        }
+
         u32 mips = TEXTURE_MIP_MAP_COUNT_0;
 
         switch (State.DX.Surfaces.Dimensions)
@@ -339,6 +365,7 @@ namespace DX
         State.DX.Textures.Textures[indx].Format = format;
 
         strcpy(State.DX.Textures.Textures[indx].Name, tex->Name);
+        State.DX.Textures.Textures[indx].IsReplaced = FALSE;
 
         DXC(State.DX.DirectX.Device->CreateTexture(dims, dims, mips, D3DUSAGE_NONE, format,
             D3DPOOL::D3DPOOL_DEFAULT, &State.DX.Textures.Textures[indx].Texture, NULL),
