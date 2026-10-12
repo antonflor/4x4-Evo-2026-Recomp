@@ -1,8 +1,10 @@
-# 4x4 Evolution 2026 (evo2026)
+![4x4 Evolution: 2026 Edition](docs/screenshots/banner.jpg)
 
-![Arizona at 1080p in true widescreen, with the race HUD at the screen edges](docs/screenshots/race-widescreen.jpg)
+# 4x4 Evolution: 2026 Edition
 
-A drop-in Direct3D 9 renderer for **4x4 Evolution Build 57** (Terminal Reality, 2000) that runs the game on modern Windows:
+**4x4 Evolution** is the off-road racing game Terminal Reality released in 2000 for Windows, Mac and Dreamcast. This project brings the PC version (Build 57) to modern Windows in native HD and true widescreen.
+
+The heart of it is **evo2026**, a drop-in Direct3D 9 renderer for the game. You don't need to modify the game's exe on disk. It adds:
 
 - native-resolution output (1080p, 1440p, 4K) in a borderless window
 - true widescreen (Hor+), with the race HUD moved to the screen edges
@@ -34,6 +36,8 @@ The original textures next to the AI-upscaled HD pack.
 ![Original textures vs AI-upscaled HD textures](docs/screenshots/hd-textures-before-after.jpg)
 
 ### In game
+
+![Arizona at 1080p in true widescreen, with the race HUD at the screen edges](docs/screenshots/race-widescreen.jpg)
 
 <table>
   <tr>
